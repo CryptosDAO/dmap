@@ -2,7 +2,7 @@
 
 This is a maintained fork of the original dapphub projects by **Nikolai Mushegian**.
 
-Nikolai was a brilliant early Ethereum developer and co-founder of **MakerDAO**, where he helped design the original **DAI** stablecoin system. He also created **WETH**, co-authored the **Balancer** whitepaper, and contributed to **RAI** and many other foundational DeFi primitives. He tragically passed away in 2022 at age 29.
+Nikolai was a brilliant early Ethereum developer and co-founder of **MakerDAO**, where he helped design the original **DAI** stablecoin system. He built the MakerDAO protocol at the **Bitcoin Center** and was an alumni there. He also created **WETH**, co-authored the **Balancer** whitepaper, and contributed to **RAI** and many other foundational DeFi primitives. He tragically passed away in 2022 at age 29.
 
 We have updated these repositories to work with ethers.js v6.16.0, modern Solidity, Helia for IPFS, and current tooling — while preserving the original minimalist, immutable, and corruption-resistant design Nikolai championed.
 
