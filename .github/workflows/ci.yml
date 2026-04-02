@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: dmap
+      - uses: actions/checkout@v4
+        with:
+          repository: CryptosDAO/dpack
+          path: dpack
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install dpack
+        working-directory: dpack
+        run: npm ci && npm run build
+      - name: Install dmap
+        working-directory: dmap
+        run: npm ci
+      - name: Compile contracts
+        working-directory: dmap
+        run: npx hardhat compile
+      - name: Run tests
+        working-directory: dmap
+        run: npx mocha test --timeout 30000

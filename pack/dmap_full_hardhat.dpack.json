@@ -1,0 +1,50 @@
+{
+  "format": "dpack-1",
+  "network": "hardhat",
+  "types": {
+    "Dmap": {
+      "typename": "Dmap",
+      "artifact": {
+        "/": "bafkreicveagglyqcjvwtjs7wff4tywrtnpvndnp574fozh7fjbpu2c3eqi"
+      }
+    },
+    "RootZone": {
+      "typename": "RootZone",
+      "artifact": {
+        "/": "bafkreift7lgyzrkaltdmtna3rfw34e5r3mzphyrcxgsxzucczzydxgx6uy"
+      }
+    },
+    "FreeZone": {
+      "typename": "FreeZone",
+      "artifact": {
+        "/": "bafkreigvhoijew3mdifhfp2wfhx2k4tfmxht5rlrnscaq5kd2xrhhnx3ja"
+      }
+    }
+  },
+  "objects": {
+    "dmap": {
+      "objectname": "dmap",
+      "typename": "Dmap",
+      "address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+      "artifact": {
+        "/": "bafkreicveagglyqcjvwtjs7wff4tywrtnpvndnp574fozh7fjbpu2c3eqi"
+      }
+    },
+    "rootzone": {
+      "objectname": "rootzone",
+      "typename": "RootZone",
+      "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+      "artifact": {
+        "/": "bafkreift7lgyzrkaltdmtna3rfw34e5r3mzphyrcxgsxzucczzydxgx6uy"
+      }
+    },
+    "freezone": {
+      "objectname": "freezone",
+      "typename": "FreeZone",
+      "address": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+      "artifact": {
+        "/": "bafkreigvhoijew3mdifhfp2wfhx2k4tfmxht5rlrnscaq5kd2xrhhnx3ja"
+      }
+    }
+  }
+}

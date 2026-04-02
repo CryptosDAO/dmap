@@ -36,15 +36,42 @@ lib.parse =s=> {
     })
 }
 
+// Helper to get provider from an ethers v6 contract
+function _getProvider(contract) {
+    if (contract.runner && contract.runner.provider) return contract.runner.provider
+    if (contract.runner) return contract.runner
+    if (contract.provider) return contract.provider // v5 compat
+    fail('No provider available on contract')
+}
+
+// ethers v6 renamed getStorageAt to getStorage
+function _getStorageAt(provider, addr, slot) {
+    if (typeof provider.getStorage === 'function') return provider.getStorage(addr, slot)
+    if (typeof provider.getStorageAt === 'function') return provider.getStorageAt(addr, slot)
+    fail('Provider has no getStorage/getStorageAt method')
+}
+
+// Helper to get the contract address (ethers v6: .target, v5: .address)
+function _getAddress(contract) {
+    return contract.target || contract.address
+}
+
+// Helper to get the signer from a contract
+function _getSigner(contract) {
+    return contract.runner || contract.signer
+}
+
 lib.get = async (dmap, slot) => {
     const nextslot = hexZeroPad(
         hexlify(BigInt(slot) + BigInt(1)), 32
     )
+    const provider = _getProvider(dmap)
+    const addr = _getAddress(dmap)
     let meta, data
     await Promise.all(
         [
-            dmap.provider.getStorageAt(dmap.address, slot),
-            dmap.provider.getStorageAt(dmap.address, nextslot)
+            _getStorageAt(provider, addr, slot),
+            _getStorageAt(provider, addr, nextslot)
         ]
     ).then(res => [meta, data] = res)
     return [meta, data]
@@ -57,13 +84,17 @@ lib.getByZoneAndName = async (dmap, zone, name) => {
 
 lib.set = async (dmap, name, meta, data) => {
     const calldata = encodeFunctionCallBytes32Args("set(bytes32,bytes32,bytes32)", [name, meta, data])
-    return dmap.signer.sendTransaction({to: dmap.address, data: calldata})
+    const signer = _getSigner(dmap)
+    const addr = _getAddress(dmap)
+    return signer.sendTransaction({to: addr, data: calldata})
 }
 
 // const slotabi = ["function slot(bytes32 s) external view returns (bytes32)"]
-// const slot_i = new ethers.utils.Interface(slotabi)
+// const slot_i = new ethers.Interface(slotabi)
 lib.slot = async (dmap, slot) => {
-    const val = await dmap.provider.getStorageAt(dmap.address, slot)
+    const provider = _getProvider(dmap)
+    const addr = _getAddress(dmap)
+    const val = await _getStorageAt(provider, addr, slot)
     return val
 }
 

@@ -1,17 +1,18 @@
-const dpack = require("@etherpacks/dpack");
-const hh = require("hardhat");
+const hh = require("hardhat")
 const ethers = hh.ethers
-const {b32, revert, send, snapshot, want} = require("minihat");
+const {b32, revert, send, snapshot, want} = require("./utils/minihat")
 const lib = require('../dmap.js')
-const {padRight} = require("./utils/helpers");
+const {padRight} = require("./utils/helpers")
 
 describe('dpath', ()=> {
+    let dpack
     const LOCK = `0x${'00'.repeat(31)}01`
     let dmap
     let freezone
     let rootzone
 
     before(async ()=>{
+        dpack = await import('@cryptosdao/dpack')
         const [signer] = await ethers.getSigners()
         const pack = await hh.run('dmap-mock-deploy')
         const dapp = await dpack.load(pack, hh.ethers, signer)
@@ -38,13 +39,14 @@ describe('dpath', ()=> {
         beforeEach(async ()=>{
             await send(freezone.take, test_name)
             await send(freezone.set, test_name, LOCK, test_data)
+            await hh.network.provider.send("evm_increaseTime", [1])
             await send(freezone.take, free_name)
-            await send(freezone.set, free_name, OPEN, padRight(freezone.address))
+            await send(freezone.set, free_name, OPEN, padRight(await freezone.getAddress()))
         })
 
         it('empty path', async () => {
             const res = await lib.walk(dmap, '')
-            want(res.data.slice(0, 42)).eq(rootzone.address.toLowerCase())
+            want(res.data.slice(0, 42)).eq((await rootzone.getAddress()).toLowerCase())
             want(res.meta).eq(LOCK)
         })
 
@@ -52,11 +54,11 @@ describe('dpath', ()=> {
             const included = await lib.walk(dmap, ':free')
             const excluded = await lib.walk(dmap, 'free')
             const period = await lib.walk(dmap, '.free')
-            want(included.data.slice(0,42)).eq(freezone.address.toLowerCase())
+            want(included.data.slice(0,42)).eq((await freezone.getAddress()).toLowerCase())
             want(included.meta).eq(LOCK)
-            want(excluded.data.slice(0,42)).eq(freezone.address.toLowerCase())
+            want(excluded.data.slice(0,42)).eq((await freezone.getAddress()).toLowerCase())
             want(excluded.meta).eq(LOCK)
-            want(period.data.slice(0,42)).eq(freezone.address.toLowerCase())
+            want(period.data.slice(0,42)).eq((await freezone.getAddress()).toLowerCase())
             want(period.meta).eq(LOCK)
         })
 

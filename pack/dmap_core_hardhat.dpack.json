@@ -1,0 +1,22 @@
+{
+  "format": "dpack-1",
+  "network": "hardhat",
+  "types": {
+    "Dmap": {
+      "typename": "Dmap",
+      "artifact": {
+        "/": "bafkreicveagglyqcjvwtjs7wff4tywrtnpvndnp574fozh7fjbpu2c3eqi"
+      }
+    }
+  },
+  "objects": {
+    "dmap": {
+      "objectname": "dmap",
+      "typename": "Dmap",
+      "address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+      "artifact": {
+        "/": "bafkreicveagglyqcjvwtjs7wff4tywrtnpvndnp574fozh7fjbpu2c3eqi"
+      }
+    }
+  }
+}

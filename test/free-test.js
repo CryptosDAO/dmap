@@ -1,18 +1,14 @@
-const dpack = require('@etherpacks/dpack')
 const hh = require('hardhat')
-const assert = require('assert');
-
 const ethers = hh.ethers
-const coder = ethers.utils.defaultAbiCoder
-const keccak256 = ethers.utils.keccak256
-const { b32, fail, hear, revert, send, snapshot, want, mine } = require('minihat')
+const { b32, fail, hear, revert, send, snapshot, want, mine } = require('./utils/minihat')
 const { bounds } = require('./bounds')
 global.window = {}
 const utils = require('../docs/main')
-const {check_gas, testlib} = require("./utils/helpers");
-const constants = ethers.constants
+const {check_gas, testlib} = require("./utils/helpers")
+const assert = require('assert')
 
 describe('freezone', ()=>{
+    let dpack
     let dmap
     let rootzone
     let freezone
@@ -32,6 +28,7 @@ describe('freezone', ()=>{
     const cid512 =        'bafkrgqa4i3c7xsn45ajkgb3yyo52su6n766tnirxkkhx7qf4gohgb3wvrqv5uflwn5tqparnbt434kevuyh7lxwu6mxw5m55ne2l76zj5jrlg'
 
     before(async ()=>{
+        dpack = await import('@cryptosdao/dpack');
         [ali, bob, cat] = await ethers.getSigners();
         [ALI, BOB, CAT] = [ali, bob, cat].map(x => x.address)
 
@@ -48,9 +45,9 @@ describe('freezone', ()=>{
     })
 
     it('init', async () => {
-        want(await freezone.dmap()).to.eql(dmap.address)
-        want(await freezone.last()).to.eql(constants.Zero)
-        want(await freezone.controllers(name)).to.eql(constants.AddressZero)
+        want(await freezone.dmap()).to.eql(await dmap.getAddress())
+        want(await freezone.last()).to.eql(0n)
+        want(await freezone.controllers(name)).to.eql(ethers.ZeroAddress)
     })
 
     it('set without control', async ()=>{
@@ -60,17 +57,18 @@ describe('freezone', ()=>{
     it('set after take', async ()=>{
         await send(freezone.take, name)
         await send(freezone.set, name, open, data1)
-        const slot = keccak256(coder.encode(["address", "bytes32"], [freezone.address, name]))
+        const coder = ethers.AbiCoder.defaultAbiCoder()
+        const slot = ethers.keccak256(coder.encode(["address", "bytes32"], [await freezone.getAddress(), name]))
         const [res_meta, res_data] = await testlib.get(dmap, slot)
 
-        want(ethers.utils.hexlify(data1)).eq(res_data)
-        want(ethers.utils.hexlify(open)).eq(res_meta)
+        want(ethers.hexlify(data1)).eq(res_data)
+        want(ethers.hexlify(open)).eq(res_meta)
 
         await send(freezone.set, name, lock, data2)
         const [res_meta_2, res_data_2] = await testlib.get(dmap, slot)
 
-        want(ethers.utils.hexlify(data2)).eq(res_data_2)
-        want(ethers.utils.hexlify(lock)).eq(res_meta_2)
+        want(ethers.hexlify(data2)).eq(res_data_2)
+        want(ethers.hexlify(lock)).eq(res_meta_2)
 
         await fail('LOCKED', freezone.set, name, lock, data1)
         await fail('LOCKED', freezone.set, name, open, data1)
@@ -83,11 +81,12 @@ describe('freezone', ()=>{
         await fail('ERR_OWNER', freezone.set, name, lock, data1)
 
         await send(freezone.connect(bob).set, name, lock, data1)
-        const slot = keccak256(coder.encode(["address", "bytes32"], [freezone.address, name]))
+        const coder = ethers.AbiCoder.defaultAbiCoder()
+        const slot = ethers.keccak256(coder.encode(["address", "bytes32"], [await freezone.getAddress(), name]))
         const [res_meta, res_data] = await testlib.get(dmap.connect(bob), slot)
 
-        want(ethers.utils.hexlify(data1)).eq(res_data)
-        want(ethers.utils.hexlify(lock)).eq(res_meta)
+        want(ethers.hexlify(data1)).eq(res_data)
+        want(ethers.hexlify(lock)).eq(res_meta)
     })
 
     it('take taken', async ()=>{
@@ -111,18 +110,16 @@ describe('freezone', ()=>{
         await fail('ERR_OWNER', freezone.give, name, CAT)
     })
 
-    it('take error priority + limit', async () => {
-        await hh.network.provider.send("evm_setAutomine", [false]);
-        await hh.network.provider.send("evm_setIntervalMining", [0]);
-        // taken, limit
-        await freezone.take(name)
+    it('take error: taken', async () => {
+        await send(freezone.take, name)
         await fail('ERR_TAKEN', freezone.take, name)
-        await mine(hh)
-        // limit
-        await freezone.take(b32('name2'))
-        await fail('ERR_LIMIT', freezone.take, b32('name3'))
+    })
 
-        await hh.network.provider.send("evm_setAutomine", [true]);
+    it('take error: limit', async () => {
+        await send(freezone.take, b32('name2'))
+        const last = Number(await freezone.last())
+        await hh.network.provider.send("evm_setNextBlockTimestamp", [last])
+        await fail('ERR_LIMIT', freezone.take, b32('name3'))
     })
 
     it('set error priority', async () => {
@@ -130,13 +127,14 @@ describe('freezone', ()=>{
         await send(freezone.take, name)
         await send(freezone.set, name, lock, data1)
         await fail('ERR_OWNER', freezone.connect(bob).set, name, lock, data2)
-        await fail('LOCKED()', freezone.set, name, lock, data1)
+        await fail('LOCKED', freezone.set, name, lock, data1)
     })
 
     it('store CID variants', async ()=>{
         const cids = [cidDefault, cidSHA3, cidV0, cidBlake2b160]
         for (const [index, cid] of cids.entries()) {
             const name = b32(String.fromCharCode(97 + index))
+            await hh.network.provider.send("evm_increaseTime", [1])
             await send(freezone.take, name)
             const [meta, data] = utils.prepareCID(cid, false)
             await send(freezone.set, name, meta, data)
@@ -145,7 +143,8 @@ describe('freezone', ()=>{
             await send(freezone.set, name, lock_meta, lock_data)
             await fail('LOCK', freezone.set, name, lock_meta, lock_data)
 
-            const slot = keccak256(coder.encode(["address", "bytes32"], [freezone.address, name]))
+            const coder = ethers.AbiCoder.defaultAbiCoder()
+            const slot = ethers.keccak256(coder.encode(["address", "bytes32"], [await freezone.getAddress(), name]))
             const [read_meta, read_data] = await testlib.get(dmap, slot)
             const res_cid = utils.unpackCID(read_meta, read_data)
             const helper_cid = await utils.readCID(dmap, 'free:' + String.fromCharCode(97 + index))
@@ -161,7 +160,7 @@ describe('freezone', ()=>{
     describe('Give event', () => {
         it('take', async () => {
             const rx = await send(freezone.take, name)
-            hear(rx, "Give", [constants.AddressZero, '0x'+name.toString('hex'), ALI])
+            hear(rx, "Give", [ethers.ZeroAddress, '0x'+name.toString('hex'), ALI])
         })
         it('give', async () => {
             await send(freezone.take, name)
@@ -185,7 +184,6 @@ describe('freezone', ()=>{
         })
 
         it('set', async () => {
-            // calls dmap.set, no need to test specific state changes
             await send(freezone.take, name)
             const rx = await send(freezone.set, name, b32('meta'), b32('data'))
             const bound = bounds.freezone.set

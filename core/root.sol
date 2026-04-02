@@ -1,6 +1,11 @@
 /// SPDX-License-Identifier: AGPL-3.0
 
-pragma solidity 0.8.13;
+/// @title  RootZone — commit-reveal root registry for dmap
+/// @author Nikolai Mushegian <mail@nikolai.fyi>
+/// @notice Registers top-level names via a commit-reveal scheme.
+///         Costs 1 ETH (sent to the block producer) with a 31-hour cooldown.
+
+pragma solidity ^0.8.34;
 
 import { Dmap } from './dmap.sol';
 

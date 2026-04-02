@@ -1,9 +1,14 @@
 const fs = require('fs')
-const { getContractAddress } = require('@ethersproject/address')
-const dpack = require('@etherpacks/dpack')
-const { b32, send } = require("minihat");
+
+const b32 = (str) => {
+    const buf = Buffer.alloc(32)
+    buf.write(str)
+    return buf
+}
 
 task('dmap-mock-deploy', async (args, hh)=> {
+    const dpack = await import('@cryptosdao/dpack')
+    const ethers = hh.ethers
     const packdir = args.packdir ?? './pack/'
 
     const dmap_type = await hh.artifacts.readArtifact('Dmap')
@@ -19,51 +24,54 @@ task('dmap-mock-deploy', async (args, hh)=> {
     const free_deployer = await hh.ethers.getContractFactory('FreeZone')
 
     const [ali] = await hh.ethers.getSigners()
-    const tx_count = await ali.getTransactionCount()
-    const root_address = getContractAddress({ from: ali.address, nonce: tx_count + 1 })
+    const tx_count = await ali.getNonce()
+    const root_address = ethers.getCreateAddress({ from: ali.address, nonce: tx_count + 1 })
     const tx_dmap = await dmap_deployer.deploy(root_address)
-    await tx_dmap.deployed()
-    const tx_root = await root_deployer.deploy(tx_dmap.address)
-    const tx_free = await free_deployer.deploy(tx_dmap.address)
-    await tx_root.deployed()
-    await tx_free.deployed()
+    await tx_dmap.waitForDeployment()
+    const tx_root = await root_deployer.deploy(await tx_dmap.getAddress())
+    const tx_free = await free_deployer.deploy(await tx_dmap.getAddress())
+    await tx_root.waitForDeployment()
+    await tx_free.waitForDeployment()
 
     const salt = b32('salt')
     const name = b32('free')
-    const zone = tx_free.address
+    const zone = await tx_free.getAddress()
+    const coder = ethers.AbiCoder.defaultAbiCoder()
     const types = [ "bytes32", "bytes32", "address" ]
-    const encoded = ethers.utils.defaultAbiCoder.encode(types, [ salt, name, zone ])
-    const commitment = hh.ethers.utils.keccak256(encoded)
-    await send(tx_root.hark, commitment, { value: ethers.utils.parseEther('1') })
-    await send(tx_root.etch, salt, name, zone)
+    const encoded = coder.encode(types, [ salt, name, zone ])
+    const commitment = ethers.keccak256(encoded)
+    const harkTx = await tx_root.hark(commitment, { value: ethers.parseEther('1') })
+    await harkTx.wait()
+    const etchTx = await tx_root.etch(salt, name, zone)
+    await etchTx.wait()
 
-    const pb = await dpack.builder(hh.network.name)
+    const pb = dpack.builder(hh.network.name)
     await pb.packObject({
         objectname: 'dmap',
         typename: 'Dmap',
-        address: tx_dmap.address,
+        address: await tx_dmap.getAddress(),
         artifact: dmap_type
-    }, alsoPackType=true)
+    }, true)
 
     // save only dmap in the core pack
-    const corepack = await pb.build()
+    const corepack = pb.build()
 
     // put everything else in a 'full' pack
     await pb.packObject({
         objectname: 'rootzone',
         typename: 'RootZone',
-        address: tx_root.address,
+        address: await tx_root.getAddress(),
         artifact: root_type
-    }, alsoPackType=true)
+    }, true)
 
     await pb.packObject({
         objectname: 'freezone',
         typename: 'FreeZone',
-        address: tx_free.address,
+        address: await tx_free.getAddress(),
         artifact: free_type
-    }, alsoPackType=true)
+    }, true)
 
-    const fullpack = await pb.build()
+    const fullpack = pb.build()
 
     const show =(o)=> JSON.stringify(o, null, 2)
 

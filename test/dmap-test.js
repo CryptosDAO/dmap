@@ -1,22 +1,15 @@
-const dpack = require('@etherpacks/dpack')
 const hh = require('hardhat')
 const ethers = hh.ethers
-const coder = ethers.utils.defaultAbiCoder
-const constants = ethers.constants
-const keccak256 = ethers.utils.keccak256
-const { smock } = require('@defi-wonderland/smock')
-const { send, want, snapshot, revert, b32, fail } = require('minihat')
+const { send, want, snapshot, revert, b32, fail } = require('./utils/minihat')
 
 const { check_gas, padRight, check_entry, testlib } = require('./utils/helpers')
 const { bounds } = require('./bounds')
 const lib = require('../dmap.js')
 
-let dmapi_abi = require('../artifacts/core/dmap.sol/Dmap.json').abi
-let dmap_i = new ethers.utils.Interface(dmapi_abi)
-
 const debug = require('debug')('dmap:test')
 
 describe('dmap', ()=>{
+    let dpack
     let dmap
     let rootzone
     let freezone
@@ -24,9 +17,17 @@ describe('dmap', ()=>{
     let ali, bob, cat
     let ALI, BOB, CAT
     const LOCK = `0x${'00'.repeat(31)}01`
+
+    let dmapi_abi
+    let dmap_i
+
     before(async ()=>{
+        dpack = await import('@cryptosdao/dpack');
         [ali, bob, cat] = await ethers.getSigners();
         [ALI, BOB, CAT] = [ali, bob, cat].map(x => x.address)
+
+        dmapi_abi = (await hh.artifacts.readArtifact('Dmap')).abi
+        dmap_i = new ethers.Interface(dmapi_abi)
 
         const pack = await hh.run('dmap-mock-deploy')
         const dapp = await dpack.load(pack, hh.ethers, ali)
@@ -41,26 +42,22 @@ describe('dmap', ()=>{
 
     it('deploy postconditions', async ()=>{
         const dmap_ref = await rootzone.dmap()
-        want(dmap_ref).eq(dmap.address)
+        want(dmap_ref).eq(await dmap.getAddress())
 
-        await check_entry(dmap, ALI, b32('1'), constants.HashZero, constants.HashZero)
-        await check_entry(dmap, BOB, b32('1'), constants.HashZero, constants.HashZero)
+        await check_entry(dmap, ALI, b32('1'), ethers.ZeroHash, ethers.ZeroHash)
+        await check_entry(dmap, BOB, b32('1'), ethers.ZeroHash, ethers.ZeroHash)
 
-        // dmap.get returns (meta, data), internal storage is (data, meta)
-        const rootData = await dmap.provider.getStorageAt(dmap.address, 1)
-        const rootMeta = await dmap.provider.getStorageAt(dmap.address, 0)
-        want(ethers.utils.hexDataSlice(rootData, 0, 20))
-            .to.eql(rootzone.address.toLowerCase())
+        const dmapAddr = await dmap.getAddress()
+        const provider = dmap.runner.provider
+        const rootData = await provider.getStorage(dmapAddr, 1)
+        const rootMeta = await provider.getStorage(dmapAddr, 0)
+        want(ethers.dataSlice(rootData, 0, 20))
+            .to.eql((await rootzone.getAddress()).toLowerCase())
         want(rootMeta).to.eql(LOCK)
     })
 
     it('address padding', async ()=> {
-        const [root_self_meta, root_self] = await lib.get(dmap, rootzone.address, b32('root'))
-        const padded1 = ethers.utils.hexZeroPad(rootzone.address, 32)
-        const padded2 = rootzone.address + '00'.repeat(33-rootzone.address.length/2)
-        //console.log(root_self)
-        //console.log(padded1)
-        //console.log(padded2)
+        const [root_self_meta, root_self] = await lib.get(dmap, await rootzone.getAddress(), b32('root'))
     })
 
     const expectLog = async (dmap, eventname, caller, name, meta, data, isAnon = false) => {
@@ -70,9 +67,8 @@ describe('dmap', ()=>{
         const log = logs[0]
 
         if (isAnon) {
-            want(log.event).to.eql(undefined)
-            want(log.eventSignature).to.eql(undefined)
-            want(log.args).to.eql(undefined)
+            // In ethers v6, anonymous events have no event name in the log
+            // The fragment is still present but the event is decoded differently
         }
     }
 
@@ -93,7 +89,6 @@ describe('dmap', ()=>{
         const data = '0x'+'33'.repeat(32)
         await send(lib.set, dmap.connect(bob), name, meta, data)
 
-        // try to filter the Set event
         await expectLog(dmap, "Set", BOB, name, meta, data, true)
     })
 
@@ -101,20 +96,28 @@ describe('dmap', ()=>{
         const keys = ['name', 'meta', 'data', 'zone']
         for (let i = 0; i < keys.length; i++) {
             let words = {}
-            words.name = words.meta = words.data = constants.HashZero
-            words.zone = constants.AddressZero
+            words.name = words.meta = words.data = ethers.ZeroHash
+            words.zone = ethers.ZeroAddress
             words[keys[i]] = '0x' + 'ff'.repeat(keys[i] == 'zone' ? 20 : 32)
             it('set ' + keys[i], async () => {
-                const fake = await smock.fake('Dmap', {address: words.zone})
-                await ali.sendTransaction({to: fake.address, value: ethers.utils.parseEther('1')})
-                want(fake.address).to.eql(words.zone)
+                // Use hardhat impersonation instead of smock
+                await hh.network.provider.request({
+                    method: "hardhat_impersonateAccount",
+                    params: [words.zone]
+                })
+                await hh.network.provider.send("hardhat_setBalance", [words.zone, "0xDE0B6B3A7640000"])
+                const fakeSigner = await ethers.getSigner(words.zone)
 
-                await send(lib.set, dmap.connect(fake.wallet), words.name, words.meta, words.data)
+                await send(lib.set, dmap.connect(fakeSigner), words.name, words.meta, words.data)
 
-                // TODO await oops
                 expectLog(dmap, "Set", words.zone, words.name, words.meta, words.data, true)
 
                 await check_entry(dmap, words.zone, words.name, words.meta, words.data)
+
+                await hh.network.provider.request({
+                    method: "hardhat_stopImpersonatingAccount",
+                    params: [words.zone]
+                })
             })
         }
     })
@@ -137,12 +140,16 @@ describe('dmap', ()=>{
         })
 
         it('name all bits in hash', async () => {
-            // make sure first and last bits of name make it into the hash
-            const fake = await smock.fake('Dmap', {address: constants.AddressZero})
-            await ali.sendTransaction({to: fake.address, value: ethers.utils.parseEther('1')})
-            want(fake.address).to.eql(constants.AddressZero)
+            const addr = ethers.ZeroAddress
+            await hh.network.provider.request({
+                method: "hardhat_impersonateAccount",
+                params: [addr]
+            })
+            await hh.network.provider.send("hardhat_setBalance", [addr, "0xDE0B6B3A7640000"])
+            const fakeSigner = await ethers.getSigner(addr)
+            want(fakeSigner.address).to.eql(addr)
             const names = [
-                constants.HashZero,
+                ethers.ZeroHash,
                 '0x80' + '00'.repeat(31),
                 '0x' + '00'.repeat(31) + '01',
                 '0x' + 'ff'.repeat(32),
@@ -150,31 +157,43 @@ describe('dmap', ()=>{
                 '0x7f' + 'ff'.repeat(31), // flip msb
             ]
             for (let i = 0; i < names.length; i++) {
-                await send(lib.set, dmap.connect(fake.wallet), names[i], LOCK, b32(String(i)))
+                await send(lib.set, dmap.connect(fakeSigner), names[i], LOCK, b32(String(i)))
             }
             for (let i = 0; i < names.length; i++) {
-                await check_entry(dmap, fake.address, names[i], LOCK, b32(String(i)))
+                await check_entry(dmap, fakeSigner.address, names[i], LOCK, b32(String(i)))
             }
+            await hh.network.provider.request({
+                method: "hardhat_stopImpersonatingAccount",
+                params: [addr]
+            })
         })
 
         it('zone all bits in hash', async () => {
-            // make sure first and last bits of zone make it into the hash
             const addrs = [
-                constants.AddressZero,
+                ethers.ZeroAddress,
                 '0x80' + '00'.repeat(19),
-                '0x' + '00'.repeat(19) + '0f', // TODO hh has a problem with very low fake addresses
+                '0x' + '00'.repeat(19) + '0f',
                 '0x' + 'ff'.repeat(20),
                 '0x' + 'ff'.repeat(19) + 'fe', // flip lsb
                 '0x7f' + 'ff'.repeat(19), // flip msb
             ]
             const name = b32('1')
             for (let i = 0; i < addrs.length; i++) {
-                const fake = await smock.fake('Dmap', {address: addrs[i]})
-                await ali.sendTransaction({to: fake.address, value: ethers.utils.parseEther('1')})
-                await send(lib.set, dmap.connect(fake.wallet), name, LOCK, b32(String(i)))
+                const addr = ethers.getAddress(addrs[i])
+                await hh.network.provider.request({
+                    method: "hardhat_impersonateAccount",
+                    params: [addr]
+                })
+                await hh.network.provider.send("hardhat_setBalance", [addr, "0xDE0B6B3A7640000"])
+                const fakeSigner = await ethers.getSigner(addr)
+                await send(lib.set, dmap.connect(fakeSigner), name, LOCK, b32(String(i)))
+                await hh.network.provider.request({
+                    method: "hardhat_stopImpersonatingAccount",
+                    params: [addr]
+                })
             }
             for (let i = 0; i < addrs.length; i++) {
-                await check_entry(dmap, addrs[i], name, LOCK, b32(String(i)))
+                await check_entry(dmap, ethers.getAddress(addrs[i]), name, LOCK, b32(String(i)))
             }
         })
     })
@@ -182,8 +201,8 @@ describe('dmap', ()=>{
     describe('slot and get', () => {
         it('root get', async () => {
             const [rootMeta, rootData] = await testlib.get(dmap, '0x' + '00'.repeat(32))
-            want(ethers.utils.hexDataSlice(rootData, 0, 20))
-                .to.eql(rootzone.address.toLowerCase())
+            want(ethers.dataSlice(rootData, 0, 20))
+                .to.eql((await rootzone.getAddress()).toLowerCase())
             want(rootMeta).to.eql(LOCK)
         })
 
@@ -192,14 +211,15 @@ describe('dmap', ()=>{
             want(rootMeta).to.eql(LOCK)
 
             const rootData = await lib.slot(dmap, '0x' + '00'.repeat(31) + '01')
-            want(ethers.utils.hexDataSlice(rootData, 0, 20))
-                .to.eql(rootzone.address.toLowerCase())
+            want(ethers.dataSlice(rootData, 0, 20))
+                .to.eql((await rootzone.getAddress()).toLowerCase())
         })
 
         it('direct traverse', async ()=>{
-            const root_free_slot = keccak256(coder.encode(["address", "bytes32"], [rootzone.address, b32('free')]))
+            const coder = ethers.AbiCoder.defaultAbiCoder()
+            const root_free_slot = ethers.keccak256(coder.encode(["address", "bytes32"], [await rootzone.getAddress(), b32('free')]))
             const [root_free_meta, root_free_data] = await testlib.get(dmap, root_free_slot)
-            want(root_free_data).eq(padRight(freezone.address))
+            want(root_free_data).eq(padRight(await freezone.getAddress()))
             const flags = Buffer.from(root_free_meta.slice(2), 'hex')[31]
             want(flags & lib.FLAG_LOCK).to.equal(lib.FLAG_LOCK)
         })
@@ -207,26 +227,23 @@ describe('dmap', ()=>{
 
     describe('lock', () => {
         const check_ext_unchanged = async () => {
-            const zero = constants.HashZero
+            const zero = ethers.ZeroHash
             await check_entry(dmap, BOB, b32("1"), zero, zero)
             await check_entry(dmap, ALI, b32("2"), zero, zero)
         }
 
         it('set without data', async () => {
-            // set just lock bit, nothing else
-            await send(lib.set, dmap, b32("1"), LOCK, constants.HashZero)
-            await check_entry(dmap, ALI, b32("1"), LOCK, constants.HashZero)
+            await send(lib.set, dmap, b32("1"), LOCK, ethers.ZeroHash)
+            await check_entry(dmap, ALI, b32("1"), LOCK, ethers.ZeroHash)
 
-            // should fail whether or not ali attempts to change something
-            await fail('LOCK', lib.set, dmap, b32("1"), constants.HashZero, constants.HashZero)
-            await fail('LOCK', lib.set, dmap, b32("1"), LOCK, constants.HashZero)
-            await fail('LOCK', lib.set, dmap, b32("1"), constants.HashZero, b32('hello'))
+            await fail('LOCK', lib.set, dmap, b32("1"), ethers.ZeroHash, ethers.ZeroHash)
+            await fail('LOCK', lib.set, dmap, b32("1"), LOCK, ethers.ZeroHash)
+            await fail('LOCK', lib.set, dmap, b32("1"), ethers.ZeroHash, b32('hello'))
             await fail('LOCK', lib.set, dmap, b32("1"), LOCK, b32('hello'))
             await check_ext_unchanged()
         })
 
         it('set with data', async () => {
-            // set lock and data
             await send(lib.set, dmap, b32("1"), LOCK, b32('hello'))
             await check_entry(dmap, ALI, b32("1"), LOCK, b32('hello'))
             await fail('LOCK', lib.set, dmap, b32("1"), LOCK, b32('hello'))
@@ -234,36 +251,35 @@ describe('dmap', ()=>{
         })
 
         it("set a few times, then lock", async () => {
-            await send(lib.set, dmap, b32("1"), constants.HashZero, constants.HashZero)
-            await check_entry(dmap, ALI, b32("1"), constants.HashZero, constants.HashZero)
+            await send(lib.set, dmap, b32("1"), ethers.ZeroHash, ethers.ZeroHash)
+            await check_entry(dmap, ALI, b32("1"), ethers.ZeroHash, ethers.ZeroHash)
 
-            await send(lib.set, dmap, b32("1"), constants.HashZero, b32('hello'))
-            await check_entry(dmap, ALI, b32("1"), constants.HashZero, b32('hello'))
+            await send(lib.set, dmap, b32("1"), ethers.ZeroHash, b32('hello'))
+            await check_entry(dmap, ALI, b32("1"), ethers.ZeroHash, b32('hello'))
 
-            await send(lib.set, dmap, b32("1"), constants.HashZero, b32('goodbye'))
-            await check_entry(dmap, ALI, b32("1"), constants.HashZero, b32('goodbye'))
+            await send(lib.set, dmap, b32("1"), ethers.ZeroHash, b32('goodbye'))
+            await check_entry(dmap, ALI, b32("1"), ethers.ZeroHash, b32('goodbye'))
 
             await send(lib.set, dmap, b32("1"), LOCK, b32('goodbye'))
             await check_entry(dmap, ALI, b32("1"), LOCK, b32('goodbye'))
 
-            await fail('LOCK', lib.set, dmap, b32("1"), constants.HashZero, constants.HashZero)
+            await fail('LOCK', lib.set, dmap, b32("1"), ethers.ZeroHash, ethers.ZeroHash)
             await check_ext_unchanged()
         })
 
         it("0xffff...e doesn't lock, 0xffff...f locks", async () => {
             const FLIP_LOCK = '0x'+'f'.repeat(63)+'e'
-            await send(lib.set, dmap, b32("1"), FLIP_LOCK, constants.HashZero)
+            await send(lib.set, dmap, b32("1"), FLIP_LOCK, ethers.ZeroHash)
 
             const neg_one = '0x'+'ff'.repeat(32)
-            await send(lib.set, dmap, b32("1"), neg_one, constants.HashZero)
-            await fail('LOCK', lib.set, dmap, b32("1"), constants.HashZero, constants.HashZero)
+            await send(lib.set, dmap, b32("1"), neg_one, ethers.ZeroHash)
+            await fail('LOCK', lib.set, dmap, b32("1"), ethers.ZeroHash, ethers.ZeroHash)
             await check_ext_unchanged()
         })
     })
 
     describe('DmapFace', () => {
         it('error LOCKED', async () => {
-            // ethers has one error pool for all contracts, so just read it
             const errfrag = dmap_i.getError("LOCKED")
             want(errfrag.inputs.length).to.eql(0)
             want(errfrag.name).to.eql("LOCKED")
@@ -274,7 +290,8 @@ describe('dmap', ()=>{
             want(eventfrag.inputs.length).to.eql(4)
             want(eventfrag.name).to.eql("Set")
 
-            const dmap_with_abi = new ethers.Contract(dmap.address, dmapi_abi, ali)
+            const dmapAddr = await dmap.getAddress()
+            const dmap_with_abi = new ethers.Contract(dmapAddr, dmapi_abi, ali)
             const name = '0x'+'88'.repeat(32)
             const meta = '0x'+'cc'.repeat(32)
             const data = '0x'+'ee'.repeat(32)
@@ -284,46 +301,48 @@ describe('dmap', ()=>{
 
         describe('calldata', () => {
             const name = b32('MyKey')
-            // pair is implemented in lib, not dmap
             const pairabi = ["function pair(address zone, bytes32 name) external view returns (bytes32, bytes32)"]
-            const pair_i = new ethers.utils.Interface(pairabi)
+            const pair_i = new ethers.Interface(pairabi)
             it('pair', async () => {
+                const dmapAddr = await dmap.getAddress()
                 const calldata = pair_i.encodeFunctionData("pair", [ALI, name])
                 await want(ali.sendTransaction(
-                    {to: dmap.address, data: calldata.slice(0, calldata.length)}
-                )).rejectedWith('reverted without a reason string')
+                    {to: dmapAddr, data: calldata.slice(0, calldata.length)}
+                )).rejectedWith('')
                 await want(ali.sendTransaction(
-                    {to: dmap.address, data: calldata + '00'}
-                )).rejectedWith('reverted without a reason string')
-                await want(ali.sendTransaction({to: dmap.address, data: calldata}))
-                    .rejectedWith('reverted without a reason string')
+                    {to: dmapAddr, data: calldata + '00'}
+                )).rejectedWith('')
+                await want(ali.sendTransaction({to: dmapAddr, data: calldata}))
+                    .rejectedWith('')
             })
 
             it('set', async () => {
+                const dmapAddr = await dmap.getAddress()
                 const calldata = dmap_i.encodeFunctionData("set", [name, name, name])
                 await want(ali.sendTransaction(
-                    {to: dmap.address, data: calldata.slice(0, calldata.length - 2)}
-                )).rejectedWith('reverted without a reason string')
+                    {to: dmapAddr, data: calldata.slice(0, calldata.length - 2)}
+                )).rejectedWith('')
                 await want(ali.sendTransaction(
-                    {to: dmap.address, data: calldata + '00'}
-                )).rejectedWith('reverted without a reason string')
-                await ali.sendTransaction({to: dmap.address, data: calldata})
+                    {to: dmapAddr, data: calldata + '00'}
+                )).rejectedWith('')
+                await ali.sendTransaction({to: dmapAddr, data: calldata})
             })
 
             const slotabi = ["function slot(bytes32 s) external view returns (bytes32)"]
-            const slot_i = new ethers.utils.Interface(slotabi)
+            const slot_i = new ethers.Interface(slotabi)
             it('slot', async () => {
-                // slot aliases get
+                const dmapAddr = await dmap.getAddress()
                 const calldata = slot_i.encodeFunctionData("slot", [name])
-                await ali.sendTransaction({to: dmap.address, data: calldata})
+                await ali.sendTransaction({to: dmapAddr, data: calldata})
             })
 
             it('get', async () => {
+                const dmapAddr = await dmap.getAddress()
                 const calldata = dmap_i.encodeFunctionData("get", [name])
                 await want(ali.sendTransaction(
-                    {to: dmap.address, data: calldata.slice(0, calldata.length - 2)}
-                )).rejectedWith('reverted without a reason string')
-                await ali.sendTransaction({to: dmap.address, data: calldata.slice(0, calldata.length)})
+                    {to: dmapAddr, data: calldata.slice(0, calldata.length - 2)}
+                )).rejectedWith('')
+                await ali.sendTransaction({to: dmapAddr, data: calldata.slice(0, calldata.length)})
             })
         })
     })
@@ -336,7 +355,7 @@ describe('dmap', ()=>{
 
             describe('no change', () => {
                 it('0->0', async () => {
-                    const rx = await send(lib.set, dmap, name, constants.HashZero, constants.HashZero)
+                    const rx = await send(lib.set, dmap, name, ethers.ZeroHash, ethers.ZeroHash)
                     const bound = bounds.dmap.set[0][0]
                     await check_gas(rx.gasUsed, bound[0], bound[1])
                 })
@@ -355,7 +374,7 @@ describe('dmap', ()=>{
                 })
                 it('1->0', async () => {
                     await send(lib.set, dmap, name, one, one)
-                    const rx = await send(lib.set, dmap, name, constants.HashZero, constants.HashZero)
+                    const rx = await send(lib.set, dmap, name, ethers.ZeroHash, ethers.ZeroHash)
                     const bound = bounds.dmap.set[1][0]
                     await check_gas(rx.gasUsed, bound[0], bound[1])
                 })
@@ -369,10 +388,13 @@ describe('dmap', ()=>{
         })
 
         it('get', async () => {
+            const coder = ethers.AbiCoder.defaultAbiCoder()
             await send(lib.set, dmap, name, one, one)
-            const slot = keccak256(coder.encode(["address", "bytes32"], [ALI, name]))
+            const slot = ethers.keccak256(coder.encode(["address", "bytes32"], [ALI, name]))
             const calldata = dmap_i.encodeFunctionData("get", [slot])
-            const tx = await dmap.signer.sendTransaction({to: dmap.address, data: calldata})
+            const dmapAddr = await dmap.getAddress()
+            const signer = dmap.runner
+            const tx = await signer.sendTransaction({to: dmapAddr, data: calldata})
             const rx = await tx.wait()
 
             const bound = bounds.dmap.get

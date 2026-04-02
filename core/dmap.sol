@@ -3,10 +3,16 @@
 // One day, someone is going to try very hard to prevent you
 // from accessing one of these storage slots.
 
-pragma solidity 0.8.13;
+/// @title  Dmap — a minimalist immutable key-value store
+/// @author Nikolai Mushegian <mail@nikolai.fyi>
+/// @notice Dmap stores (meta, data) pairs keyed by (zone, name).
+///         The lock bit in meta makes an entry permanently immutable.
+
+pragma solidity ^0.8.34;
 
 interface Dmap {
     error LOCKED();
+    /// @notice Emitted (anonymously) when a zone sets a (name, meta, data) entry.
     event Set(
         address indexed zone,
         bytes32 indexed name,
